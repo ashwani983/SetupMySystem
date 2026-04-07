@@ -1,0 +1,20 @@
+{
+    "$schema": "https://aka.ms/winget-packages.schema.1.0.json",
+    "CreationDate": "2026-04-07",
+    "Pinned": false,
+    "Packages": [
+        { "PackageIdentifier": "Microsoft.VisualStudioCode" },
+        { "PackageIdentifier": "Git.Git" },
+        { "PackageIdentifier": "OpenJS.NodeJS.LTS" },
+        { "PackageIdentifier": "GitHub.cli" },
+        { "PackageIdentifier": "Python.Python.3.13" },
+        { "PackageIdentifier": "Oracle.JDK.21" },
+        { "PackageIdentifier": "Google.FirebaseCLI" },
+        { "PackageIdentifier": "Google.PlatformTools" },
+        { "PackageIdentifier": "TheDocumentFoundation.LibreOffice" },
+        { "PackageIdentifier": "Ghisler.TotalCommander" },
+        { "PackageIdentifier": "ApacheFriends.Xampp.8.2" },
+        { "PackageIdentifier": "7zip.7zip" },
+        { "PackageIdentifier": "Microsoft.WindowsTerminal" }
+    ]
+}
