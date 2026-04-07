@@ -5,7 +5,8 @@ param(
     [switch]$SkipDocker,
     [switch]$SkipDevOps,
     [switch]$DryRun,
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Verbose
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,7 +19,7 @@ function Write-Log {
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
     $logMessage = "[$timestamp] $Message"
     Add-Content -Path $script:LogFile -Value $logMessage -ErrorAction SilentlyContinue
-    Write-Host $Message
+    if ($script:Verbose) { Write-Host "  LOG: $Message" -ForegroundColor DarkGray }
 }
 
 function Write-Section {
@@ -27,6 +28,13 @@ function Write-Section {
     Write-Host " $Title" -ForegroundColor Cyan
     Write-Host "========================================`n" -ForegroundColor Cyan
     Write-Log "=== $Title ==="
+}
+
+function Write-Command {
+    param([string]$Command, [string]$Description)
+    Write-Host "  > $Description" -ForegroundColor Yellow
+    Write-Host "    $Command" -ForegroundColor DarkGray
+    Write-Log "CMD: $Command"
 }
 
 function Write-Success { param([string]$Message); Write-Host "  [OK] $Message" -ForegroundColor Green; Write-Log "SUCCESS: $Message" }
@@ -41,8 +49,10 @@ function Test-Administrator {
 
 function Test-InternetConnection {
     Write-Host "Checking internet connection..." -NoNewline
+    $cmd = "Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet"
+    Write-Command $cmd "Testing internet connectivity"
     try {
-        $result = Test-Connection -ComputerName 8.8.8.8 -Count 1 -Quiet -ErrorAction Stop
+        $result = Invoke-Expression $cmd -ErrorAction Stop
         if ($result) { Write-Success "Connected"; return $true }
     } catch { }
     Write-Warning "No internet connection detected"
@@ -53,14 +63,19 @@ function Test-DiskSpace {
     param([int]$RequiredGB = 10)
     $drive = $env:SystemDrive
     $freeGB = [math]::Round((Get-PSDrive -Name $drive.TrimEnd(':') -ErrorAction SilentlyContinue).Free / 1GB, 2)
-    Write-Host "Disk space on ${drive}: ${freeGB} GB free" -NoNewline
-    if ($freeGB -ge $RequiredGB) { Write-Success "OK"; return $true }
-    Write-Warning "Low disk space (recommended: ${RequiredGB} GB)"
+    Write-Host "Checking disk space on ${drive}..." -NoNewline
+    $cmd = "Get-PSDrive -Name '$($drive.TrimEnd(':'))'"
+    Write-Command $cmd "Getting disk space info"
+    Write-Log "Disk space: ${freeGB} GB free (required: ${RequiredGB} GB)"
+    if ($freeGB -ge $RequiredGB) { Write-Success "${freeGB} GB free - OK"; return $true }
+    Write-Warning "Low disk space (${freeGB} GB free, recommended: ${RequiredGB} GB)"
     return ($Force -or (Read-Host "Continue anyway? (y/n)") -eq 'y')
 }
 
 function Test-InstalledPackage {
     param([string]$PackageId)
+    $cmd = "winget list --id $PackageId -s winget --accept-source-agreements"
+    Write-Command $cmd "Checking if $PackageId is installed"
     $installed = winget list --id $PackageId -s winget --accept-source-agreements 2>$null | Select-String $PackageId
     return ($null -ne $installed)
 }
@@ -69,6 +84,8 @@ function Backup-File {
     param([string]$Path)
     if (Test-Path $Path) {
         $backupPath = "$Path.backup_$(Get-Date -Format 'yyyyMMdd_HHmmss')"
+        $cmd = "Copy-Item -Path '$Path' -Destination '$backupPath' -Force"
+        Write-Command $cmd "Backing up $Path"
         Copy-Item -Path $Path -Destination $backupPath -Force
         $script:ChangesMade += "Backup: $backupPath"
         Write-Log "Backed up $Path to $backupPath"
@@ -77,24 +94,39 @@ function Backup-File {
     return $null
 }
 
-function Set-EnvironmentVariable {
-    param([string]$Name, [string]$Value, [string]$Scope = "User")
-    $currentValue = [Environment]::GetEnvironmentVariable($Name, $Scope)
-    if ($currentValue -ne $Value) {
-        Backup-File "env:$Name"
-        [Environment]::SetEnvironmentVariable($Name, $Value, $Scope)
-        $script:ChangesMade += "EnvVar: $Name"
-        Write-Log "Set $Name=$Value in $Scope scope"
+function Invoke-Exec {
+    param([string]$Command, [string]$Description, [switch]$IgnoreErrors)
+    
+    Write-Command $Command $Description
+    
+    if ($DryRun) {
+        Write-Host "    [DRY-RUN] Command skipped" -ForegroundColor Magenta
+        Write-Log "DRY-RUN: $Command"
+        return
+    }
+    
+    try {
+        Invoke-Expression $Command 2>&1 | Tee-Object -Append -FilePath $script:LogFile
+        if ($LASTEXITCODE -eq 0 -or $IgnoreErrors) {
+            Write-Log "SUCCESS: $Command"
+        } else {
+            Write-Warning "Command exited with code: $LASTEXITCODE"
+        }
+    } catch {
+        if ($IgnoreErrors) {
+            Write-Log "WARN: $Command - $_"
+        } else {
+            Write-Error-Msg "Failed: $_"
+        }
     }
 }
-
-
 
 function Install-Package {
     param([string]$PackageId, [string]$PackageName)
     
     if ($DryRun) {
         Write-Host "  [DRY-RUN] Would install: $PackageName" -ForegroundColor Magenta
+        Write-Log "DRY-RUN: Would install $PackageId"
         return
     }
     
@@ -103,11 +135,15 @@ function Install-Package {
         return
     }
     
-    Write-Host "  Installing $PackageName..." -NoNewline
+    Write-Host "  Installing $PackageName..." -ForegroundColor White
+    $cmd = "winget install --id $PackageId --accept-package-agreements --accept-source-agreements --silent"
+    Write-Command $cmd "Installing $PackageName via winget"
+    
     try {
-        $output = winget install --id $PackageId --accept-package-agreements --accept-source-agreements --silent 2>&1
+        $null = winget install --id $PackageId --accept-package-agreements --accept-source-agreements --silent 2>&1 | Tee-Object -Append -FilePath $script:LogFile
         if ($LASTEXITCODE -eq 0) {
             Write-Success "$PackageName installed"
+            $script:ChangesMade += "Installed: $PackageName"
         } else {
             Write-Warning "$PackageName installation failed or cancelled"
         }
@@ -143,9 +179,11 @@ $devopsPackages = @(
 )
 
 Write-Section "Windows System Setup"
-Write-Host "Log file: $script:LogFile`n" -ForegroundColor DarkGray
+Write-Host "Log file: $script:LogFile" -ForegroundColor DarkGray
+if ($Verbose) { Write-Host "Verbose mode enabled" -ForegroundColor DarkGray }
+Write-Host ""
 Write-Log "Starting Windows System Setup"
-Write-Log "Parameters: SkipVSCode=$SkipVSCode, SkipDocker=$SkipDocker, SkipDevOps=$SkipDevOps, DryRun=$DryRun, Force=$Force"
+Write-Log "Parameters: SkipVSCode=$SkipVSCode, SkipDocker=$SkipDocker, SkipDevOps=$SkipDevOps, DryRun=$DryRun, Force=$Force, Verbose=$Verbose"
 
 if (-not (Test-Administrator)) {
     Write-Error-Msg "Please run as Administrator!"
@@ -162,7 +200,9 @@ if (-not (Test-InternetConnection)) {
 Test-DiskSpace -RequiredGB 15 | Out-Null
 
 Write-Section "Checking Existing Installations"
+Write-Host "  Running checks for all packages..."
 foreach ($pkg in $packages) {
+    Write-Log "Checking: $($pkg.Name)"
     if (Test-InstalledPackage -PackageId $pkg.Id) {
         Write-Success "$($pkg.Name) already installed"
     }
@@ -172,6 +212,7 @@ Write-Section "Installing Software via winget"
 foreach ($pkg in $packages) {
     if ($pkg.Id -eq "Microsoft.VisualStudioCode" -and $SkipVSCode) {
         Write-Warning "Skipping VS Code per request"
+        Write-Log "SKIPPED: $($pkg.Name) per user request"
         continue
     }
     Install-Package -PackageId $pkg.Id -PackageName $pkg.Name
@@ -182,6 +223,7 @@ if (-not $SkipDevOps) {
     foreach ($pkg in $devopsPackages) {
         if ($pkg.Id -eq "Docker.DockerDesktop" -and $SkipDocker) {
             Write-Warning "Skipping Docker per request"
+            Write-Log "SKIPPED: $($pkg.Name) per user request"
             continue
         }
         Install-Package -PackageId $pkg.Id -PackageName $pkg.Name
@@ -195,6 +237,8 @@ if (-not $SkipPSReadLine) {
     $psProfileDir = Split-Path $psProfilePath -Parent
     
     if (-not (Test-Path $psProfileDir)) {
+        $cmd = "New-Item -ItemType Directory -Path '$psProfileDir' -Force"
+        Write-Command $cmd "Creating PowerShell profile directory"
         New-Item -ItemType Directory -Path $psProfileDir -Force | Out-Null
     }
     
@@ -231,6 +275,8 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
     if (Test-Path $psProfilePath) {
         $currentProfile = Get-Content $psProfilePath -Raw -ErrorAction SilentlyContinue
         if ($currentProfile -notmatch "PSReadLine") {
+            $cmd = "Add-Content -Path '$psProfilePath' -Value '<PSReadLineConfig>'"
+            Write-Command $cmd "Appending PSReadLine config to profile"
             Add-Content -Path $psProfilePath -Value $psReadLineConfig
             $script:ChangesMade += "PSReadLine: Config appended to $psProfilePath"
             Write-Success "PSReadLine configured"
@@ -238,6 +284,8 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
             Write-Success "PSReadLine already configured"
         }
     } else {
+        $cmd = "Set-Content -Path '$psProfilePath' -Value '<PSReadLineConfig>'"
+        Write-Command $cmd "Creating new profile with PSReadLine config"
         Set-Content -Path $psProfilePath -Value $psReadLineConfig
         $script:ChangesMade += "PSReadLine: New profile created at $psProfilePath"
         Write-Success "PSReadLine configured (new profile created)"
@@ -245,25 +293,36 @@ if (Get-Module -ListAvailable -Name PSReadLine) {
 }
 
 Write-Section "Configuring Git"
-git config --global credential.helper wincred 2>$null
-git config --global core.editor "code --wait" 2>$null
-git config --global init.defaultBranch main 2>$null
+$gitConfigs = @(
+    @{ cmd = "git config --global credential.helper wincred"; desc = "Setting credential helper" },
+    @{ cmd = "git config --global core.editor `"code --wait`""; desc = "Setting default editor" },
+    @{ cmd = "git config --global init.defaultBranch main"; desc = "Setting default branch" }
+)
+foreach ($cfg in $gitConfigs) {
+    Write-Command $cfg.cmd $cfg.desc
+    Invoke-Expression $cfg.cmd 2>$null
+}
 Write-Success "Git configured"
 
 if (-not $SkipDevOps) {
     Write-Section "SSH Key Check"
     $sshKey = "$env:USERPROFILE\.ssh\id_ed25519.pub"
+    $cmd = "Test-Path '$sshKey'"
+    Write-Command $cmd "Checking for SSH key"
     if (-not (Test-Path $sshKey)) {
         Write-Warning "No SSH key found. To generate one, run:"
         Write-Host "  ssh-keygen -t ed25519 -C `"your@email.com`"" -ForegroundColor Cyan
+        Write-Log "SSH key not found - user notified"
     } else {
-        Write-Success "SSH key found"
+        Write-Success "SSH key found at $sshKey"
     }
 }
 
 Write-Section "Setup Complete!"
 Write-Host "Restart PowerShell to apply PSReadLine changes." -ForegroundColor Green
-Write-Host "`nChanges made:" -ForegroundColor Cyan
-$script:ChangesMade | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+if ($script:ChangesMade.Count -gt 0) {
+    Write-Host "`nChanges made:" -ForegroundColor Cyan
+    $script:ChangesMade | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+}
 Write-Host "`nLog saved to: $script:LogFile" -ForegroundColor DarkGray
 Write-Log "Setup completed successfully"
