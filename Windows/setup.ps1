@@ -113,10 +113,11 @@ function Invoke-Exec {
             Write-Warning "Command exited with code: $LASTEXITCODE"
         }
     } catch {
+        $errorMsg = $_.Exception.Message
         if ($IgnoreErrors) {
-            Write-Log "WARN: $Command - $_"
+            Write-Log "WARN: $Command - $errorMsg"
         } else {
-            Write-Error-Msg "Failed: $_"
+            Write-Error-Msg "Failed: $errorMsg"
         }
     }
 }
@@ -148,7 +149,8 @@ function Install-Package {
             Write-Warning "$PackageName installation failed or cancelled"
         }
     } catch {
-        Write-Warning "Error installing $PackageName: $($_.Exception.Message)"
+        $errorMsg = $_.Exception.Message
+        Write-Warning "Error installing $PackageName`: $errorMsg"
     }
 }
 
