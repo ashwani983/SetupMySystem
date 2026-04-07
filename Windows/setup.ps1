@@ -148,7 +148,7 @@ function Install-Package {
             Write-Warning "$PackageName installation failed or cancelled"
         }
     } catch {
-        Write-Warning "Error installing $PackageName: $_"
+        Write-Warning "Error installing $PackageName: $($_.Exception.Message)"
     }
 }
 
