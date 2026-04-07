@@ -98,9 +98,10 @@ check_internet() {
 
 check_disk_space() {
     local required_gb=${1:-10}
-    local free_gb=$(df -g / | awk 'NR==2 {print $4}')
+    local free_gb
+    free_gb=$(df -h / | awk 'NR==2 {print $4}' | sed 's/[A-Za-z]*//')
     info "Checking disk space..."
-    print_cmd "Free space: ${free_gb} GB" "df -g /"
+    print_cmd "Free space: ${free_gb} GB" "df -h /"
     log "Disk space: ${free_gb} GB free (required: ${required_gb} GB)"
     if [[ $free_gb -ge $required_gb ]]; then
         success "${free_gb} GB free - OK"
@@ -235,15 +236,26 @@ section "Installing Applications"
 install_cask "visual-studio-code" "VS Code"
 install_cask "libreoffice" "LibreOffice"
 install_cask "double-commander" "Double Commander"
-install_cask "bruno" "Bruno API Client"
+
+if [[ "$DRY_RUN" == true ]]; then
+    echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install Bruno"
+    log "DRY-RUN: Would install Bruno via npm"
+else
+    if ! command -v bruno &>/dev/null; then
+        info "Installing Bruno..."
+        run_cmd "Installing Bruno via npm" "npm install -g bruno"
+        success "Bruno installed"
+    else
+        success "Bruno already installed"
+    fi
+fi
 
 section "Installing CLI Tools"
 install_brew "p7zip"
-install_brew "htop" "htop"
+install_brew "htop"
 install_brew "jq"
 install_brew "tree"
 install_brew "vim"
-install_brew "macvim" "MacVim"
 
 if [[ "$SKIP_DEVOPS" == false ]]; then
     section "Installing DevOps Tools"
@@ -278,12 +290,8 @@ if [[ "$SKIP_ZSH" == false ]]; then
         local zsh_custom="$HOME/.oh-my-zsh/custom"
         run_cmd "Creating Zsh custom plugins directory" "mkdir -p $zsh_custom/plugins"
         
-        declare -A plugins=(
-            ["zsh-autosuggestions"]="https://github.com/zsh-users/zsh-autosuggestions"
-            ["zsh-completions"]="https://github.com/zsh-users/zsh-completions"
-            ["zsh-syntax-highlighting"]="https://github.com/zsh-users/zsh-syntax-highlighting.git"
-            ["zsh-history-substring-search"]="https://github.com/zsh-users/zsh-history-substring-search.git"
-        )
+        declare -A plugins
+        plugins=(["zsh-autosuggestions"]="https://github.com/zsh-users/zsh-autosuggestions" ["zsh-completions"]="https://github.com/zsh-users/zsh-completions" ["zsh-syntax-highlighting"]="https://github.com/zsh-users/zsh-syntax-highlighting.git" ["zsh-history-substring-search"]="https://github.com/zsh-users/zsh-history-substring-search.git")
         
         for plugin in "${!plugins[@]}"; do
             if [ ! -d "$zsh_custom/plugins/$plugin" ]; then

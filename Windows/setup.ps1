@@ -172,12 +172,11 @@ $packages = @(
 
 $devopsPackages = @(
     @{ Id = "Docker.DockerDesktop"; Name = "Docker Desktop" },
-    @{ Id = "Amazon.AWSCLI"; Name = "AWS CLI" },
+    @{ Id = "Amazon.AWSCLIV2"; Name = "AWS CLI" },
     @{ Id = "Hashicorp.Terraform"; Name = "Terraform" },
     @{ Id = "Kubernetes.kubectl"; Name = "kubectl" },
     @{ Id = "Helm.Helm"; Name = "Helm" },
-    @{ Id = "Flameshot.Flameshot"; Name = "Flameshot" },
-    @{ Id = "UseBruno.Bruno"; Name = "Bruno API Client" }
+    @{ Id = "Flameshot.Flameshot"; Name = "Flameshot" }
 )
 
 Write-Section "Windows System Setup"
@@ -307,6 +306,32 @@ foreach ($cfg in $gitConfigs) {
 Write-Success "Git configured"
 
 if (-not $SkipDevOps) {
+    Write-Section "Installing Bruno API Client"
+    Write-Host "  Checking for Bruno..." -NoNewline
+    $brunoPath = "$env:LOCALAPPDATA\Programs\Bruno\bruno.exe"
+    if ((Test-Path $brunoPath) -or (Get-Command bruno -ErrorAction SilentlyContinue)) {
+        Write-Success "Bruno already installed"
+    } else {
+        Write-Host "  Installing Bruno via npm..." -ForegroundColor White
+        $cmd = "npm install -g bruno"
+        Write-Command $cmd "Installing Bruno via npm"
+        if ($DryRun) {
+            Write-Host "    [DRY-RUN] Bruno installation skipped" -ForegroundColor Magenta
+        } else {
+            try {
+                npm install -g bruno 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Success "Bruno installed"
+                    $script:ChangesMade += "Installed: Bruno"
+                } else {
+                    Write-Warning "Bruno installation failed. Install manually: npm install -g bruno"
+                }
+            } catch {
+                Write-Warning "Bruno installation failed. Install manually: npm install -g bruno"
+            }
+        }
+    }
+    
     Write-Section "SSH Key Check"
     $sshKey = "$env:USERPROFILE\.ssh\id_ed25519.pub"
     $cmd = "Test-Path '$sshKey'"

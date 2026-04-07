@@ -80,7 +80,7 @@ run_sudo() {
     print_cmd "$desc" "sudo $cmd"
     
     if [[ "$DRY_RUN" == true ]]; then
-        echo -e "    ${MAGENTA}[DRY-RUN] Command skipped${NC}"
+        echo -e "    ${MAGENTA}[DRY-RUN]${NC} Command skipped${NC}"
         log "DRY-RUN: sudo $cmd"
         return 0
     fi
@@ -96,6 +96,27 @@ run_sudo() {
             error "Command failed: sudo $cmd"
             return 1
         fi
+    fi
+}
+
+run_cmd_sudo() {
+    local desc="$1"
+    local cmd="$2"
+    
+    print_cmd "$desc" "$cmd"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "    ${MAGENTA}[DRY-RUN]${NC} Command skipped${NC}"
+        log "DRY-RUN: $cmd"
+        return 0
+    fi
+    
+    if eval "$cmd" 2>&1 | tee -a "$LOG_FILE"; then
+        log "SUCCESS: $cmd"
+        return 0
+    else
+        warn "Command failed: $cmd"
+        return 1
     fi
 }
 
@@ -271,10 +292,8 @@ if [[ "$SKIP_DEVOPS" == false ]]; then
             if ! check_installed "docker"; then
                 info "Installing Docker..."
                 run_sudo "Creating apt keyrings directory" "install -m 0755 -d /etc/apt/keyrings"
-                run_cmd "Downloading Docker GPG key" "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
-                local arch
-                arch=$(dpkg --print-architecture)
-                run_sudo "Adding Docker repository" "sh -c 'echo \"deb [arch=$arch signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" > /etc/apt/sources.list.d/docker.list'"
+                run_cmd_sudo "Downloading Docker GPG key" "curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg"
+                run_sudo "Adding Docker repository" "sh -c 'echo \"deb [arch=\$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \$(lsb_release -cs) stable\" > /etc/apt/sources.list.d/docker.list'"
                 run_sudo "Updating package list" "apt update -qq"
                 run_sudo "Installing Docker packages" "apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"
                 run_sudo "Adding user to docker group" "usermod -aG docker $USER"
@@ -287,8 +306,29 @@ if [[ "$SKIP_DEVOPS" == false ]]; then
     fi
     
     install_package "terraform" "Terraform"
-    install_package "kubectl" "kubectl"
-    install_package "helm" "Helm"
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install kubectl and helm"
+        log "DRY-RUN: Would install kubectl and helm"
+    else
+        if ! check_installed "kubectl"; then
+            info "Installing kubectl..."
+            run_sudo "Downloading kubectl" "curl -LO \"https://dl.k8s.io/release/\$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl\""
+            run_sudo "Installing kubectl" "install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl"
+            run_cmd "Cleaning up kubectl download" "rm -f kubectl"
+            success "kubectl installed"
+        else
+            success "kubectl already installed"
+        fi
+        
+        if ! check_installed "helm"; then
+            info "Installing Helm..."
+            run_cmd_sudo "Downloading Helm install script" "curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash"
+            success "Helm installed"
+        else
+            success "Helm already installed"
+        fi
+    fi
     
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install AWS CLI"
@@ -306,7 +346,18 @@ if [[ "$SKIP_DEVOPS" == false ]]; then
         fi
     fi
     
-    install_package "bruno" "Bruno API Client" || warn "Bruno may need manual installation"
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install Bruno"
+        log "DRY-RUN: Would install Bruno"
+    else
+        if ! check_installed "bruno"; then
+            info "Installing Bruno..."
+            run_cmd "Downloading Bruno" "npm install -g bruno"
+            success "Bruno installed"
+        else
+            success "Bruno already installed"
+        fi
+    fi
 fi
 
 if [[ "$SKIP_ZSH" == false ]]; then
