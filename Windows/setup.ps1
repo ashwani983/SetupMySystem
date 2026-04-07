@@ -88,24 +88,7 @@ function Set-EnvironmentVariable {
     }
 }
 
-function New-SSHKey {
-    $sshDir = "$env:USERPROFILE\.ssh"
-    $sshKey = "$sshDir\id_ed25519"
-    
-    if (-not (Test-Path $sshDir)) {
-        New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
-    }
-    
-    if (-not (Test-Path "$sshKey.pub")) {
-        Write-Host "Generating SSH key..." -NoNewline
-        ssh-keygen -t ed25519 -C "automation@setup" -f $sshKey -N "" -q
-        Write-Success "SSH key created at $sshKey.pub"
-        Write-Host "`nYour public key:" -ForegroundColor Cyan
-        Get-Content "$sshKey.pub"
-    } else {
-        Write-Success "SSH key already exists"
-    }
-}
+
 
 function Install-Package {
     param([string]$PackageId, [string]$PackageName)
@@ -153,11 +136,10 @@ $devopsPackages = @(
     @{ Id = "Docker.DockerDesktop"; Name = "Docker Desktop" },
     @{ Id = "Amazon.AWSCLI"; Name = "AWS CLI" },
     @{ Id = "Hashicorp.Terraform"; Name = "Terraform" },
-    @{ Id = "Postman.Postman"; Name = "Postman" },
     @{ Id = "Kubernetes.kubectl"; Name = "kubectl" },
     @{ Id = "Helm.Helm"; Name = "Helm" },
     @{ Id = "Flameshot.Flameshot"; Name = "Flameshot" },
-    @{ Id = "Brave.Brave"; Name = "Brave Browser" }
+    @{ Id = "UseBruno.Bruno"; Name = "Bruno API Client" }
 )
 
 Write-Section "Windows System Setup"
@@ -269,8 +251,14 @@ git config --global init.defaultBranch main 2>$null
 Write-Success "Git configured"
 
 if (-not $SkipDevOps) {
-    Write-Section "SSH Key Setup"
-    New-SSHKey
+    Write-Section "SSH Key Check"
+    $sshKey = "$env:USERPROFILE\.ssh\id_ed25519.pub"
+    if (-not (Test-Path $sshKey)) {
+        Write-Warning "No SSH key found. To generate one, run:"
+        Write-Host "  ssh-keygen -t ed25519 -C `"your@email.com`"" -ForegroundColor Cyan
+    } else {
+        Write-Success "SSH key found"
+    }
 }
 
 Write-Section "Setup Complete!"

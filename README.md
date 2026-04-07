@@ -43,8 +43,8 @@ This project contains scripts to quickly set up your development environment on:
 | Terraform | winget | apt | Homebrew |
 | kubectl | winget | apt | Homebrew |
 | Helm | winget | apt | Homebrew |
-| Postman | winget | - | Homebrew |
-| Brave Browser | winget | - | Homebrew |
+| Bruno API Client | winget | apt | Homebrew |
+| Flameshot | winget | - | - |
 | Double Commander | winget | - | Homebrew |
 | XAMPP | winget | apt | Manual |
 
@@ -77,7 +77,7 @@ This project contains scripts to quickly set up your development environment on:
 - Git credential helper (cache/osxkeychain)
 - Git default editor (VS Code)
 - Default branch (main)
-- SSH key generation (ED25519)
+- SSH key check (suggests generation if missing)
 - Docker installation with user group setup (Linux)
 
 ---
@@ -159,6 +159,7 @@ git config --global user.email "your@email.com"
 
 ### Add SSH Key to GitHub
 ```bash
+ssh-keygen -t ed25519 -C "your@email.com"
 cat ~/.ssh/id_ed25519.pub
 # Copy output to GitHub > Settings > SSH Keys
 ```

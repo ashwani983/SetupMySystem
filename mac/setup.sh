@@ -79,23 +79,7 @@ check_installed() {
     command -v "$1" &>/dev/null
 }
 
-generate_ssh_key() {
-    local ssh_dir="$HOME/.ssh"
-    local ssh_key="$ssh_dir/id_ed25519"
-    
-    mkdir -p "$ssh_dir"
-    chmod 700 "$ssh_dir"
-    
-    if [[ ! -f "$ssh_key.pub" ]]; then
-        info "Generating SSH key..."
-        ssh-keygen -t ed25519 -C "automation@setup" -f "$ssh_key" -N "" -q
-        success "SSH key created at $ssh_key.pub"
-        echo -e "${CYAN}Your public key:${NC}"
-        cat "$ssh_key.pub"
-    else
-        success "SSH key already exists"
-    fi
-}
+
 
 install_brew() {
     local pkg="$1"
@@ -204,11 +188,8 @@ fi
 section "Installing Applications"
 install_cask "visual-studio-code" "VS Code"
 install_cask "libreoffice" "LibreOffice"
-install_cask "brave-browser" "Brave Browser"
-install_cask "google-chrome" "Google Chrome"
-install_cask "firefox" "Firefox"
 install_cask "double-commander" "Double Commander"
-install_cask "postman" "Postman"
+install_cask "bruno" "Bruno API Client"
 
 install_brew "p7zip"
 install_brew "htop" "htop"
@@ -280,8 +261,13 @@ git config --global pull.rebase false
 success "Git configured"
 
 if [[ "$SKIP_DEVOPS" == false ]]; then
-    section "SSH Key Setup"
-    generate_ssh_key
+    section "SSH Key Check"
+    if [[ ! -f "$HOME/.ssh/id_ed25519.pub" ]]; then
+        warn "No SSH key found. To generate one, run:"
+        echo -e "  ${CYAN}ssh-keygen -t ed25519 -C \"your@email.com\"${NC}"
+    else
+        success "SSH key found"
+    fi
 fi
 
 section "Configuring macOS"
