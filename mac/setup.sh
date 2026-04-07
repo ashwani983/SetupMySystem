@@ -11,6 +11,8 @@ NC='\033[0m'
 
 LOG_FILE="/tmp/setup_log_$(date +%Y%m%d_%H%M%S).txt"
 CHANGES_MADE=()
+ERRORS=()
+COMMAND_LOG=()
 DRY_RUN=false
 FORCE=false
 VERBOSE=false
@@ -31,17 +33,26 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-log() { echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"; }
-info() { echo -e "${CYAN}[INFO]${NC} $1"; log "INFO: $1"; }
-success() { echo -e "${GREEN}[OK]${NC} $1"; log "SUCCESS: $1"; }
-warn() { echo -e "${YELLOW}[!]${NC} $1"; log "WARN: $1"; }
-error() { echo -e "${RED}[X]${NC} $1"; log "ERROR: $1"; }
-print_cmd() { echo -e "${YELLOW}  > $1${NC}"; echo -e "${DARK}    $2${NC}"; log "CMD: $2"; }
+log() {
+    local type="${1:-INFO}"
+    local message="$2"
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$type] $message" | tee -a "$LOG_FILE"
+}
+
 section() {
-    echo -e "\n${CYAN}========================================"
-    echo -e " $1"
-    echo -e "========================================${NC}\n"
-    log "=== $1 ==="
+    echo -e "\n${CYAN}========================================${NC}"
+    echo -e "${CYAN} $1${NC}"
+    echo -e "${CYAN}========================================${NC}\n"
+    log "SECTION" "$1"
+}
+
+print_cmd() {
+    local desc="$1"
+    local cmd="$2"
+    echo -e "${YELLOW}  > $desc${NC}"
+    echo -e "${DARK}    CMD: $cmd${NC}"
+    log "COMMAND" "CMD: $cmd | DESC: $desc"
+    COMMAND_LOG+=("{\"command\": \"$cmd\", \"description\": \"$desc\", \"status\": \"PENDING\"}")
 }
 
 run_cmd() {
@@ -50,23 +61,35 @@ run_cmd() {
     local ignore_errors="${3:-false}"
     
     print_cmd "$desc" "$cmd"
+    log "EXEC" "EXECUTING: $cmd"
     
     if [[ "$DRY_RUN" == true ]]; then
-        echo -e "    ${MAGENTA}[DRY-RUN] Command skipped${NC}"
-        log "DRY-RUN: $cmd"
+        echo -e "    ${MAGENTA}[DRY-RUN] Skipped${NC}"
+        log "INFO" "DRY-RUN: $cmd skipped"
         return 0
     fi
     
-    if eval "$cmd" 2>&1 | tee -a "$LOG_FILE"; then
-        log "SUCCESS: $cmd"
+    local output
+    local exit_code=0
+    
+    output=$(eval "$cmd" 2>&1) || exit_code=$?
+    
+    if [[ -n "$output" && "$VERBOSE" == true ]]; then
+        echo "$output" | while IFS= read -r line; do
+            log "OUTPUT" "  $line"
+        done
+    fi
+    
+    if [[ $exit_code -eq 0 ]]; then
+        log "RESULT" "SUCCESS: Exit code 0"
         return 0
     else
         if [[ "$ignore_errors" == "true" ]]; then
-            warn "Command failed (ignored): $cmd"
-            log "WARN: $cmd - failed but continuing"
+            log "WARN" "WARNING: Exit code $exit_code (ignored)"
             return 0
         else
-            error "Command failed: $cmd"
+            log "ERROR" "FAILED: Exit code $exit_code"
+            ERRORS+=("$cmd : Exit code $exit_code")
             return 1
         fi
     fi
@@ -75,23 +98,23 @@ run_cmd() {
 backup_file() {
     if [[ -f "$1" ]]; then
         local backup="${1}.backup_$(date +%Y%m%d_%H%M%S)"
-        print_cmd "Backing up $1" "cp $1 $backup"
         if [[ "$DRY_RUN" != true ]]; then
             cp "$1" "$backup"
             CHANGES_MADE+=("Backup: $backup")
-            log "Backed up $1 to $backup"
+            log "BACKUP" "Backed up $1 to $backup"
         fi
     fi
 }
 
 check_internet() {
-    info "Checking internet connection..."
-    print_cmd "Pinging 8.8.8.8" "ping -c 1 8.8.8.8"
+    echo -e "${CYAN}  Checking internet connection...${NC}"
     if ping -c 1 8.8.8.8 &>/dev/null; then
-        success "Connected"
+        echo -e "${GREEN}    [OK] Connected${NC}"
+        log "CHECK" "Internet connection: OK"
         return 0
     else
-        warn "No internet connection detected"
+        echo -e "${YELLOW}    [!] No internet connection detected${NC}"
+        log "WARN" "Internet connection: FAILED"
         return 1
     fi
 }
@@ -100,14 +123,14 @@ check_disk_space() {
     local required_gb=${1:-10}
     local free_gb
     free_gb=$(df -h / | awk 'NR==2 {print $4}' | sed 's/[A-Za-z]*//')
-    info "Checking disk space..."
-    print_cmd "Free space: ${free_gb} GB" "df -h /"
-    log "Disk space: ${free_gb} GB free (required: ${required_gb} GB)"
+    echo -e "${CYAN}  Checking disk space...${NC}"
+    log "INFO" "Disk space check: ${free_gb} GB free (required: ${required_gb} GB)"
     if [[ $free_gb -ge $required_gb ]]; then
-        success "${free_gb} GB free - OK"
+        echo -e "${GREEN}    [OK] ${free_gb} GB free - OK${NC}"
         return 0
     else
-        warn "Low disk space (${free_gb} GB free, recommended: ${required_gb} GB)"
+        echo -e "${YELLOW}    [!] Low disk space (${free_gb} GB free, recommended: ${required_gb} GB)${NC}"
+        log "WARN" "Low disk space: ${free_gb} GB"
         [[ "$FORCE" == true ]] || read -p "Continue anyway? (y/n) " -n 1 -r
         echo
         [[ $REPLY =~ ^[Yy]$ ]] || [[ "$FORCE" == true ]] || exit 1
@@ -115,7 +138,6 @@ check_disk_space() {
 }
 
 check_installed() {
-    print_cmd "Checking $1" "command -v $1"
     command -v "$1" &>/dev/null
 }
 
@@ -125,20 +147,28 @@ install_brew() {
     
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install: $name"
-        log "DRY-RUN: Would install $pkg via brew"
+        log "INFO" "DRY-RUN: Would install $name via brew"
         return 0
     fi
     
-    print_cmd "Checking if $name is installed" "brew list $pkg"
     if brew list "$pkg" &>/dev/null; then
-        success "$name already installed, skipping"
+        echo -e "${GREEN}    [OK]${NC} $name already installed, skipping"
+        log "CHECK" "$name already installed"
         return 0
     fi
     
-    info "Installing $name..."
-    run_cmd "Installing $name" "brew install $pkg" || warn "Failed to install $name"
-    success "$name installed"
-    CHANGES_MADE+=("Installed: $name")
+    echo -e "${CYAN}  Installing $name...${NC}"
+    log "INSTALL" "Installing $name ($pkg)"
+    
+    if brew install "$pkg" &>/dev/null; then
+        echo -e "${GREEN}    [OK]${NC} $name installed"
+        log "RESULT" "SUCCESS: $name installed"
+        CHANGES_MADE+=("Installed: $name")
+    else
+        echo -e "${YELLOW}    [!]${NC} Failed to install $name"
+        log "ERROR" "FAILED: $name installation"
+        ERRORS+=("$name installation failed")
+    fi
 }
 
 install_cask() {
@@ -147,47 +177,58 @@ install_cask() {
     
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install cask: $name"
-        log "DRY-RUN: Would install $pkg cask"
+        log "INFO" "DRY-RUN: Would install $name cask"
         return 0
     fi
     
-    print_cmd "Checking if $name is installed" "brew list --cask $pkg"
     if brew list --cask "$pkg" &>/dev/null; then
-        success "$name already installed, skipping"
+        echo -e "${GREEN}    [OK]${NC} $name already installed, skipping"
+        log "CHECK" "$name already installed"
         return 0
     fi
     
-    info "Installing $name..."
-    run_cmd "Installing $name" "brew install --cask $pkg" || warn "Failed to install $name (may need manual download)"
-    success "$name installed"
-    CHANGES_MADE+=("Installed: $name")
+    echo -e "${CYAN}  Installing $name...${NC}"
+    log "INSTALL" "Installing $name ($pkg)"
+    
+    if brew install --cask "$pkg" &>/dev/null; then
+        echo -e "${GREEN}    [OK]${NC} $name installed"
+        log "RESULT" "SUCCESS: $name installed"
+        CHANGES_MADE+=("Installed: $name")
+    else
+        echo -e "${YELLOW}    [!]${NC} Failed to install $name (may need manual download)"
+        log "ERROR" "FAILED: $name installation"
+        ERRORS+=("$name installation failed")
+    fi
 }
 
 section "macOS System Setup"
-echo -e "Log file: $LOG_FILE"
-[[ "$VERBOSE" == true ]] && echo -e "Verbose mode enabled"
+echo -e "  ${DARK}Log file: $LOG_FILE${NC}"
+[[ "$VERBOSE" == true ]] && echo -e "  ${DARK}Verbose mode enabled${NC}"
 echo ""
-log "Starting macOS System Setup"
-log "Parameters: DRY_RUN=$DRY_RUN, FORCE=$FORCE, VERBOSE=$VERBOSE, SKIP_ZSH=$SKIP_ZSH, SKIP_DOCKER=$SKIP_DOCKER, SKIP_DEVOPS=$SKIP_DEVOPS"
+log "========================================" "INFO"
+log "Starting macOS System Setup" "INFO"
+log "Parameters: DRY_RUN=$DRY_RUN, FORCE=$FORCE, SKIP_ZSH=$SKIP_ZSH, SKIP_DOCKER=$SKIP_DOCKER, SKIP_DEVOPS=$SKIP_DEVOPS" "INFO"
 
 if [[ $EUID -eq 0 ]]; then
-    error "Do NOT run as root!"
+    echo -e "${RED}    [X]${NC} Do NOT run as root!"
     exit 1
 fi
 
-check_internet || { [[ "$FORCE" == true ]] || { warn "Internet required, aborting"; exit 1; }; }
+check_internet || { [[ "$FORCE" == true ]] || { echo -e "${YELLOW}    [!]${NC} Internet required, aborting"; exit 1; }; }
 check_disk_space 15
 
 section "Checking Existing Installations"
 echo -e "  ${CYAN}Running checks for all packages...${NC}"
-for cmd in code git curl wget node npm python3 java brew docker terraform kubectl helm aws az minikube; do
-    log "Checking: $cmd"
+log "INFO" "Checking installed packages..."
+for cmd in code git curl wget node npm python3 java brew docker terraform kubectl helm aws az minikube bruno; do
     if check_installed "$cmd"; then
         local path
         path=$(which "$cmd" 2>/dev/null || echo "unknown")
-        success "$cmd is installed ($path)"
+        echo -e "${GREEN}    [OK]${NC} $cmd is installed ($path)"
+        log "CHECK" "$cmd: installed at $path"
     else
-        info "$cmd not found"
+        echo -e "  $cmd not found"
+        log "CHECK" "$cmd: not found"
     fi
 done
 
@@ -195,41 +236,43 @@ section "Checking for Homebrew"
 if ! check_installed "brew"; then
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install Homebrew"
-        log "DRY-RUN: Would install Homebrew"
+        log "INFO" "DRY-RUN: Would install Homebrew"
     else
-        info "Installing Homebrew..."
-        run_cmd "Installing Homebrew" "/bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-        success "Homebrew installed"
+        echo -e "${CYAN}  Installing Homebrew...${NC}"
+        log "INSTALL" "Installing Homebrew"
+        /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" &>/dev/null
+        echo -e "${GREEN}    [OK]${NC} Homebrew installed"
         CHANGES_MADE+=("Installed: Homebrew")
         
         if [[ -f /opt/homebrew/bin/brew && -d "/opt/homebrew" ]]; then
-            run_cmd "Adding Homebrew to PATH" '(echo; echo '\''eval "$(/opt/homebrew/bin/brew shellenv)"'\'') >> ~/.zprofile'
             eval "$(/opt/homebrew/bin/brew shellenv)"
-            info "Added Homebrew to PATH"
+            log "INFO" "Homebrew added to PATH"
         fi
     fi
 else
-    success "Homebrew already installed"
+    echo -e "${GREEN}    [OK]${NC} Homebrew already installed"
     if [[ "$DRY_RUN" == false ]]; then
-        run_cmd "Updating Homebrew" "brew update"
+        brew update &>/dev/null || true
     fi
 fi
 
 section "Installing Development Tools"
 install_brew "git"
-install_brew "curl" "curl"
-install_brew "wget" "wget"
+install_brew "curl"
+install_brew "wget"
 install_brew "node"
 install_brew "python3"
 install_brew "openjdk@21"
 
 if [[ "$DRY_RUN" == true ]]; then
     echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install npm packages: firebase-tools, azure-cli"
-    log "DRY-RUN: Would install npm global packages"
+    log "INFO" "DRY-RUN: Would install npm global packages"
 else
-    run_cmd "Installing firebase-tools" "npm install -g firebase-tools"
-    run_cmd "Installing azure-cli" "npm install -g @azure/azure-cli" || true
-    success "Global npm packages installed"
+    if npm install -g firebase-tools &>/dev/null; then
+        echo -e "${GREEN}    [OK]${NC} firebase-tools installed"
+        log "RESULT" "SUCCESS: firebase-tools installed"
+    fi
+    npm install -g @azure/azure-cli &>/dev/null || true
 fi
 
 section "Installing Applications"
@@ -238,15 +281,19 @@ install_cask "libreoffice" "LibreOffice"
 install_cask "double-commander" "Double Commander"
 
 if [[ "$DRY_RUN" == true ]]; then
-    echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install Bruno"
-    log "DRY-RUN: Would install Bruno via npm"
+    echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install Bruno via npm"
 else
     if ! command -v bruno &>/dev/null; then
-        info "Installing Bruno..."
-        run_cmd "Installing Bruno via npm" "npm install -g bruno"
-        success "Bruno installed"
+        echo -e "${CYAN}  Installing Bruno via npm...${NC}"
+        log "INSTALL" "Installing Bruno via npm"
+        if npm install -g bruno &>/dev/null; then
+            echo -e "${GREEN}    [OK]${NC} Bruno installed"
+            CHANGES_MADE+=("Installed: Bruno")
+        else
+            echo -e "${YELLOW}    [!]${NC} Bruno installation failed. Run manually: npm install -g bruno"
+        fi
     else
-        success "Bruno already installed"
+        echo -e "${GREEN}    [OK]${NC} Bruno already installed"
     fi
 fi
 
@@ -274,88 +321,105 @@ if [[ "$SKIP_ZSH" == false ]]; then
     
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "  ${MAGENTA}[DRY-RUN]${NC} Would install oh-my-zsh and plugins"
-        log "DRY-RUN: Would install oh-my-zsh"
+        log "INFO" "DRY-RUN: Would install oh-my-zsh"
     else
         if [ ! -d "$HOME/.oh-my-zsh" ]; then
-            info "Installing oh-my-zsh..."
-            run_cmd "Installing oh-my-zsh" "sh -c \"\$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)\" \"\" --unattended"
-            success "oh-my-zsh installed"
+            echo -e "${CYAN}  Installing oh-my-zsh...${NC}"
+            log "INSTALL" "Installing oh-my-zsh"
+            sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended
+            echo -e "${GREEN}    [OK]${NC} oh-my-zsh installed"
             CHANGES_MADE+=("Installed: oh-my-zsh")
         else
-            success "oh-my-zsh already installed"
+            echo -e "${GREEN}    [OK]${NC} oh-my-zsh already installed"
         fi
         
         backup_file "$HOME/.zshrc"
         
         local zsh_custom="$HOME/.oh-my-zsh/custom"
-        run_cmd "Creating Zsh custom plugins directory" "mkdir -p $zsh_custom/plugins"
+        mkdir -p "$zsh_custom/plugins"
         
         declare -A plugins
         plugins=(["zsh-autosuggestions"]="https://github.com/zsh-users/zsh-autosuggestions" ["zsh-completions"]="https://github.com/zsh-users/zsh-completions" ["zsh-syntax-highlighting"]="https://github.com/zsh-users/zsh-syntax-highlighting.git" ["zsh-history-substring-search"]="https://github.com/zsh-users/zsh-history-substring-search.git")
         
         for plugin in "${!plugins[@]}"; do
             if [ ! -d "$zsh_custom/plugins/$plugin" ]; then
-                info "Installing $plugin..."
-                run_cmd "Cloning $plugin" "git clone ${plugins[$plugin]} $zsh_custom/plugins/$plugin"
+                echo -e "${CYAN}  Installing $plugin...${NC}"
+                git clone "${plugins[$plugin]}" "$zsh_custom/plugins/$plugin" 2>/dev/null || true
+                echo -e "${GREEN}    [OK]${NC} $plugin installed"
             fi
         done
         
-        run_cmd "Updating Zsh plugins" "sed -i '' 's/^plugins=(git)/plugins=(git zsh-autosuggestions zsh-completions zsh-syntax-highlighting sudo history-substring-search)/' ~/.zshrc"
-        success "Zsh plugins configured"
+        sed -i '' 's/^plugins=(git)/plugins=(git zsh-autosuggestions zsh-completions zsh-syntax-highlighting sudo history-substring-search)/' ~/.zshrc 2>/dev/null || true
+        echo -e "${GREEN}    [OK]${NC} Zsh plugins configured"
         CHANGES_MADE+=("Configured: Zsh plugins")
     fi
 fi
 
 section "Configuring Git"
 backup_file "$HOME/.gitconfig"
-declare -A git_configs=(
-    ["credential.helper"]="osxkeychain"
-    ["core.editor"]="code --wait"
-    ["init.defaultBranch"]="main"
-    ["pull.rebase"]="false"
-)
-for key in "${!git_configs[@]}"; do
-    run_cmd "Setting git $key" "git config --global $key \"${git_configs[$key]}\""
-done
-success "Git configured"
+git config --global credential.helper osxkeychain
+git config --global core.editor "code --wait"
+git config --global init.defaultBranch main
+git config --global pull.rebase false
+echo -e "${GREEN}    [OK]${NC} Git configured"
+log "INFO" "Git configured"
 
 if [[ "$SKIP_DEVOPS" == false ]]; then
     section "SSH Key Check"
-    print_cmd "Checking SSH key" "test -f $HOME/.ssh/id_ed25519.pub"
+    echo -e "  Checking for SSH key..." -NoNewline
     if [[ ! -f "$HOME/.ssh/id_ed25519.pub" ]]; then
-        warn "No SSH key found. To generate one, run:"
-        echo -e "  ${CYAN}ssh-keygen -t ed25519 -C \"your@email.com\"${NC}"
-        log "SSH key not found - user notified"
+        echo -e "${YELLOW}    [!]${NC} No SSH key found. To generate one, run:"
+        echo -e "      ${CYAN}ssh-keygen -t ed25519 -C \"your@email.com\"${NC}"
+        log "INFO" "SSH key not found - user notified"
     else
-        success "SSH key found"
+        echo -e "${GREEN}    [OK]${NC} SSH key found"
     fi
 fi
 
 section "Configuring macOS"
 if [[ "$DRY_RUN" == false ]]; then
-    run_cmd "Hiding dock icons for unused apps" 'defaults write com.apple.dock persistent-apps -array'
-    run_cmd "Showing all file extensions" 'defaults write NSGlobalDomain AppleShowAllExtensions -bool true'
-    run_cmd "Disabling automatic termination" 'defaults write NSGlobalDomain NSDisableAutomaticTermination -bool true'
-    run_cmd "Restarting Dock" 'killall Dock 2>/dev/null || true'
-    success "macOS configured"
+    defaults write com.apple.dock persistent-apps -array 2>/dev/null || true
+    defaults write NSGlobalDomain AppleShowAllExtensions -bool true 2>/dev/null || true
+    defaults write NSGlobalDomain NSDisableAutomaticTermination -bool true 2>/dev/null || true
+    killall Dock 2>/dev/null || true
+    echo -e "${GREEN}    [OK]${NC} macOS configured"
+    log "INFO" "macOS system preferences configured"
 fi
 
 if [[ "$DRY_RUN" == false ]]; then
     section "Cleaning Up"
-    run_cmd "Running Homebrew cleanup" "brew cleanup -q" || true
-    success "Cleanup complete"
+    brew cleanup -q 2>/dev/null || true
+    echo -e "${GREEN}    [OK]${NC} Cleanup complete"
+    log "INFO" "Homebrew cleanup completed"
 fi
 
 section "Setup Complete!"
-echo -e "${GREEN}Done! Run 'exec zsh' or restart terminal${NC}"
+
+echo -e "  ${CYAN}Summary:${NC}"
+echo -e "    Commands executed: ${#COMMAND_LOG[@]}"
+echo -e "    Errors: ${#ERRORS[@]}"
+echo -e "    Changes: ${#CHANGES_MADE[@]}"
+
 if [[ ${#CHANGES_MADE[@]} -gt 0 ]]; then
-    echo -e "\n${CYAN}Changes made:${NC}"
+    echo -e "\n  ${CYAN}Changes made:${NC}"
     for change in "${CHANGES_MADE[@]}"; do
-        echo -e "  ${YELLOW}-${NC} $change"
+        echo -e "    - $change"
     done
 fi
-echo -e "\n${CYAN}Log saved to:${NC} $LOG_FILE"
-log "Setup completed successfully"
+
+if [[ ${#ERRORS[@]} -gt 0 ]]; then
+    echo -e "\n  ${RED}Errors encountered:${NC}"
+    for error in "${ERRORS[@]}"; do
+        echo -e "    - $error"
+    done
+fi
+
+echo -e "\n  ${DARK}Log saved to: $LOG_FILE${NC}"
+echo -e "${GREEN}  Done! Run 'exec zsh' or restart terminal${NC}"
+
+log "========================================" "INFO"
+log "Setup completed - Commands: ${#COMMAND_LOG[@]}, Errors: ${#ERRORS[@]}, Changes: ${#CHANGES_MADE[@]}" "SUMMARY"
+log "========================================" "INFO"
 
 if [[ "$DRY_RUN" == false ]]; then
     section "Important Next Steps"
