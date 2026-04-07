@@ -11,8 +11,13 @@ This project contains scripts to quickly set up your development environment on:
 
 ## Features
 
+### Permission Handling
+- **Windows**: Prompts to restart as Administrator if not running with admin rights
+- **Ubuntu/macOS**: Validates sudo access before proceeding
+
 ### Pre-flight Checks
 - Internet connectivity verification
+- Sudo/admin permission validation
 - Disk space validation (requires minimum 15GB free)
 - Existing installation detection (skips already installed packages)
 - Config backup before modifications
@@ -20,7 +25,7 @@ This project contains scripts to quickly set up your development environment on:
 ### Safety Features
 - Dry-run mode to preview changes without installing
 - Automatic backup of existing configs (`~/.zshrc`, `$PROFILE`, etc.)
-- Log file generation for troubleshooting
+- Clean structured logging for easy troubleshooting
 - Rollback-ready with backup timestamps
 
 ### Software Installed
@@ -39,14 +44,14 @@ This project contains scripts to quickly set up your development environment on:
 | Windows Terminal | winget | - | - |
 | GitHub CLI | winget | apt | Homebrew |
 | Docker Desktop | winget | apt | Homebrew |
-| AWS CLI | winget | apt | Homebrew |
+| AWS CLI | winget | official | Homebrew |
 | Terraform | winget | apt | Homebrew |
-| kubectl | winget | apt | Homebrew |
-| Helm | winget | apt | Homebrew |
-| Bruno API Client | winget | apt | Homebrew |
+| kubectl | winget | official | Homebrew |
+| Helm | winget | official | Homebrew |
+| Bruno API Client | npm | npm | npm |
 | Flameshot | winget | - | - |
 | Double Commander | winget | - | Homebrew |
-| XAMPP | winget | apt | Manual |
+| XAMPP | winget | - | Manual |
 
 ### Shell Enhancements
 
@@ -79,6 +84,7 @@ This project contains scripts to quickly set up your development environment on:
 - Default branch (main)
 - SSH key check (suggests generation if missing)
 - Docker installation with user group setup (Linux)
+- macOS preferences (show extensions, dock cleanup)
 
 ---
 
@@ -90,6 +96,8 @@ This project contains scripts to quickly set up your development environment on:
 # Run PowerShell as Administrator
 .\Windows\setup.ps1
 ```
+
+> **Note:** If not running as Administrator, the script will prompt to restart with admin rights.
 
 Or use winget directly:
 ```powershell
@@ -103,12 +111,16 @@ chmod +x ubuntu/setup.sh
 ./ubuntu/setup.sh
 ```
 
+> **Note:** Sudo access is required. The script will verify sudo privileges.
+
 ### macOS
 
 ```bash
 chmod +x mac/setup.sh
 ./mac/setup.sh
 ```
+
+> **Note:** Sudo access is required. The script will verify sudo privileges.
 
 ---
 
@@ -119,6 +131,7 @@ chmod +x mac/setup.sh
 ```powershell
 .\setup.ps1 -DryRun              # Preview without installing
 .\setup.ps1 -Force               # Skip prompts
+.\setup.ps1 -Verbose             # Show detailed logs
 .\setup.ps1 -SkipVSCode          # Skip VS Code
 .\setup.ps1 -SkipPSReadLine      # Skip PSReadLine config
 .\setup.ps1 -SkipDocker          # Skip Docker
@@ -130,9 +143,11 @@ chmod +x mac/setup.sh
 ```bash
 ./setup.sh --dry-run             # Preview without installing
 ./setup.sh --force               # Skip prompts
+./setup.sh --verbose             # Show detailed output
 ./setup.sh --skip-zsh            # Skip oh-my-zsh
 ./setup.sh --skip-docker         # Skip Docker
 ./setup.sh --skip-devops         # Skip DevOps tools
+./setup.sh --help                # Show help
 ```
 
 ---
@@ -183,6 +198,36 @@ cat ~/.ssh/id_ed25519.pub
 
 ---
 
+## Logging
+
+All operations are logged to files for troubleshooting:
+
+- **Windows**: `%TEMP%\setup_log_YYYYMMDD_HHMMSS.txt`
+- **Ubuntu/macOS**: `/tmp/setup_log_YYYYMMDD_HHMMSS.txt`
+
+### Log Format
+
+```
+[SECTION] Major section headers
+[COMMAND] Command to be executed
+[CHECK] Installation check result
+[INSTALL] Package installation started
+[RESULT] Success/failure result
+[ERROR] Error occurred
+[WARNING] Warning (non-fatal)
+[BACKUP] File backup created
+[SUMMARY] Final summary
+```
+
+### End of Run Summary
+
+The script displays a summary at the end:
+- Commands executed
+- Errors encountered
+- Changes made (installs, backups)
+
+---
+
 ## Troubleshooting
 
 ### View Logs
@@ -194,6 +239,13 @@ Backed up files are named with `.backup_YYYYMMDD_HHMMSS` suffix.
 
 ### Skip Already Installed
 Scripts automatically detect installed packages and skip them.
+
+### Common Issues
+
+**Ubuntu: Bruno/kubectl/helm installation failed**
+- Bruno is installed via npm: `npm install -g bruno`
+- kubectl is installed from official Kubernetes repo
+- Helm is installed from official Helm script
 
 ---
 
