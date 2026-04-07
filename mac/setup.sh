@@ -214,6 +214,23 @@ if [[ $EUID -eq 0 ]]; then
     exit 1
 fi
 
+check_sudo() {
+    echo -e "${CYAN}  Checking sudo access...${NC}"
+    if sudo -v 2>/dev/null; then
+        echo -e "${GREEN}    [OK]${NC} Sudo access available"
+        log "CHECK" "Sudo access: OK"
+        return 0
+    else
+        echo -e "${RED}    [X]${NC} Sudo access required but not available"
+        echo -e "${YELLOW}    [!]${NC} Please ensure you have sudo privileges"
+        echo -e "      Try: ${CYAN}sudo ls${NC} to verify"
+        log "ERROR" "Sudo access: NOT AVAILABLE"
+        return 1
+    fi
+}
+
+check_sudo || { echo -e "${YELLOW}    [!]${NC} Continuing without sudo check - some installations may fail"; }
+
 check_internet || { [[ "$FORCE" == true ]] || { echo -e "${YELLOW}    [!]${NC} Internet required, aborting"; exit 1; }; }
 check_disk_space 15
 

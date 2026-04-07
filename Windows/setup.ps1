@@ -227,7 +227,19 @@ Write-Log "Starting Windows System Setup" "INFO"
 Write-Log "Parameters: SkipVSCode=$SkipVSCode, SkipDocker=$SkipDocker, SkipDevOps=$SkipDevOps, DryRun=$DryRun, Force=$Force" "INFO"
 
 if (-not (Test-Administrator)) {
-    Write-Error-Msg "Please run as Administrator!"
+    Write-Host ""
+    Write-Host "  [X] Administrator privileges required!" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "  This script needs to run as Administrator to:"
+    Write-Host "    - Install software via winget"
+    Write-Host "    - Configure system settings"
+    Write-Host ""
+    $restart = Read-Host "  Restart with Administrator privileges? (Y/n)"
+    if ($restart -ne "n") {
+        Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" $($MyInvocation.BoundParameters.Keys | ForEach-Object { "-$_" })"
+        exit 0
+    }
+    Write-Host "  Exiting..." -ForegroundColor Yellow
     exit 1
 }
 
